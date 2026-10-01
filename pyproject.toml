@@ -1,0 +1,40 @@
+[project]
+name = "flyleaf"
+version = "0.2.0"
+description = "Local inventory of AI components in a repository. Not a legal risk classifier."
+readme = "README.md"
+license = "Apache-2.0"
+authors = [
+    { name = "Krishna Dahale", email = "krishy.ai.d@gmail.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "typer>=0.12",
+]
+keywords = ["eu-ai-act", "inventory", "model-card", "cli"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Quality Assurance",
+]
+
+[project.scripts]
+flyleaf = "flyleaf.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+]
+
+[build-system]
+requires = ["uv_build>=0.9.12,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
