@@ -1,5 +1,7 @@
 # flyleaf
 
+<img src="flyleaf.jpg" alt="flyleaf" width="240">
+
 flyleaf is a local documentation clerk for AI code. It inventories the AI libraries in a repository, cites the EU AI Act provisions a person should read, and reports when a model card is missing or has fallen behind the code.
 
 A flyleaf is the blank page bound in front of a book, the page where you say what the book is. This tool prepares that page and keeps a record of when the book moves on.
