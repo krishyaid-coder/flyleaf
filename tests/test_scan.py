@@ -96,3 +96,54 @@ def test_cli_writes_markdown_without_failing_on_findings(tmp_path: Path) -> None
 def test_cli_missing_path(tmp_path: Path) -> None:
     result = runner.invoke(app, ["scan", str(tmp_path / "missing")])
     assert result.exit_code == 2
+
+
+def test_pyproject_keyword_is_not_the_evidence_line(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\n"
+        'name = "sample"\n'
+        'keywords = ["claude", "skills", "linter", "anthropic", "agent"]\n'
+        "dependencies = []\n"
+        "\n"
+        "[project.optional-dependencies]\n"
+        "eval = [\n"
+        '  "anthropic>=0.30.0",\n'
+        "]\n",
+        encoding="utf-8",
+    )
+    inventory = scan_path(tmp_path)
+    evidence = inventory["components"][0]["evidence"][0]["text"]
+    assert "anthropic>=0.30.0" in evidence
+    assert "keywords" not in evidence
+
+
+def test_keyword_alone_is_not_a_dependency(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\n"
+        'name = "sample"\n'
+        'keywords = ["anthropic", "agent"]\n'
+        'dependencies = ["PyYAML>=6"]\n',
+        encoding="utf-8",
+    )
+    inventory = scan_path(tmp_path)
+    assert inventory["components"] == []
+
+
+def test_notebook_code_cells_are_scanned_and_binaries_are_quiet(tmp_path: Path) -> None:
+    notebook = {
+        "nbformat": 4,
+        "nbformat_minor": 5,
+        "cells": [
+            {"cell_type": "markdown", "source": ["This notebook imports torch for training.\n"]},
+            {"cell_type": "code", "source": ["%pip install torch\n", "import torch\n"]},
+            {"cell_type": "code", "source": ["from transformers import AutoModel\n"]},
+        ],
+    }
+    (tmp_path / "train.ipynb").write_text(json.dumps(notebook), encoding="utf-8")
+    (tmp_path / "icon.png").write_bytes(b"\x89PNG\r\n\x1a\nnot really")
+    inventory = scan_path(tmp_path)
+    frameworks = [component["framework"] for component in inventory["components"]]
+    assert frameworks == ["torch", "transformers"]
+    assert inventory["warnings"] == []
+    torch_evidence = inventory["components"][0]["evidence"][0]["text"]
+    assert torch_evidence == "import torch"

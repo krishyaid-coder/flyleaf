@@ -79,6 +79,9 @@ def scan_path(path: Path) -> dict:
 
     for file_path in files:
         rel = file_path.relative_to(root).as_posix()
+        kind = _scan_kind(file_path.name)
+        if kind is None:
+            continue
         try:
             if file_path.stat().st_size > _MAX_BYTES:
                 warnings.append({"path": rel, "message": "Skipped a file larger than 1MB."})
@@ -88,23 +91,19 @@ def scan_path(path: Path) -> dict:
             warnings.append({"path": rel, "message": f"Could not read file: {exc}"})
             continue
 
-        name = file_path.name
-        if name.endswith(".py"):
+        if kind == "python":
             found, problem = _python_hits(text)
-            if problem:
-                warnings.append({"path": rel, "message": problem})
-        elif _is_requirements(name):
+        elif kind == "notebook":
+            found, problem = _notebook_hits(text)
+        elif kind == "requirements":
             found = _requirement_hits(text)
-        elif name == "pyproject.toml":
+            problem = None
+        elif kind == "pyproject":
             found, problem = _pyproject_hits(text)
-            if problem:
-                warnings.append({"path": rel, "message": problem})
-        elif name == "package.json":
-            found, problem = _package_json_hits(text)
-            if problem:
-                warnings.append({"path": rel, "message": problem})
         else:
-            continue
+            found, problem = _package_json_hits(text)
+        if problem:
+            warnings.append({"path": rel, "message": problem})
 
         for hit in found:
             hits.setdefault((rel, hit.rule.framework), []).append(hit)
@@ -145,6 +144,20 @@ def _is_requirements(name: str) -> bool:
     )
 
 
+def _scan_kind(name: str) -> str | None:
+    if name.endswith(".py"):
+        return "python"
+    if name.endswith(".ipynb"):
+        return "notebook"
+    if _is_requirements(name):
+        return "requirements"
+    if name == "pyproject.toml":
+        return "pyproject"
+    if name == "package.json":
+        return "package_json"
+    return None
+
+
 def _python_hits(text: str) -> tuple[list[_Hit], str | None]:
     try:
         tree = ast.parse(text)
@@ -163,6 +176,61 @@ def _python_hits(text: str) -> tuple[list[_Hit], str | None]:
         seen.add(key)
         hits.append(_Hit(rule=rule, kind="import", line=line, text=snippet))
     return hits, None
+
+
+def _notebook_hits(text: str) -> tuple[list[_Hit], str | None]:
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        return [], f"Could not parse notebook: {exc.msg}"
+    if not isinstance(data, dict):
+        return [], "Notebook was not an object."
+
+    cells = data.get("cells")
+    if not isinstance(cells, list):
+        return [], None
+
+    hits: list[_Hit] = []
+    seen: set[tuple[str, str]] = set()
+    for cell in cells:
+        if not isinstance(cell, dict) or cell.get("cell_type") != "code":
+            continue
+        code = _cell_source(cell.get("source"))
+        if not code.strip():
+            continue
+        try:
+            tree = ast.parse(_strip_magics(code))
+        except SyntaxError:
+            continue
+        for _line, module, snippet in _iter_imports(tree):
+            rule = match_import(module)
+            if rule is None:
+                continue
+            key = (rule.framework, snippet)
+            if key in seen:
+                continue
+            seen.add(key)
+            line_no, _ = _find_dep_line(text, snippet, spec=snippet)
+            hits.append(_Hit(rule=rule, kind="import", line=line_no, text=snippet))
+    return hits, None
+
+
+def _cell_source(source) -> str:
+    if isinstance(source, list):
+        return "".join(str(part) for part in source)
+    if isinstance(source, str):
+        return source
+    return ""
+
+
+def _strip_magics(code: str) -> str:
+    kept: list[str] = []
+    for line in code.splitlines():
+        if line.lstrip().startswith(("%", "!")):
+            kept.append("")
+        else:
+            kept.append(line)
+    return "\n".join(kept)
 
 
 def _iter_imports(tree: ast.AST):
@@ -211,46 +279,47 @@ def _pyproject_hits(text: str) -> tuple[list[_Hit], str | None]:
     except tomllib.TOMLDecodeError as exc:
         return [], f"Could not parse pyproject.toml: {exc}"
 
-    names: list[str] = []
+    entries: list[tuple[str, str | None]] = []
     project = data.get("project")
     if isinstance(project, dict):
-        names.extend(_string_deps(project.get("dependencies")))
+        entries.extend(_string_deps(project.get("dependencies")))
         optional = project.get("optional-dependencies")
         if isinstance(optional, dict):
             for group in optional.values():
-                names.extend(_string_deps(group))
+                entries.extend(_string_deps(group))
     groups = data.get("dependency-groups")
     if isinstance(groups, dict):
         for group in groups.values():
-            names.extend(_string_deps(group))
+            entries.extend(_string_deps(group))
     poetry = (data.get("tool") or {}).get("poetry") if isinstance(data.get("tool"), dict) else None
     if isinstance(poetry, dict):
-        names.extend(_poetry_names(poetry.get("dependencies")))
+        entries.extend(_poetry_names(poetry.get("dependencies")))
         group_table = poetry.get("group")
         if isinstance(group_table, dict):
             for group in group_table.values():
                 if isinstance(group, dict):
-                    names.extend(_poetry_names(group.get("dependencies")))
+                    entries.extend(_poetry_names(group.get("dependencies")))
 
-    return _hits_for_names(text, names), None
+    return _hits_for_names(text, entries), None
 
 
-def _string_deps(value) -> list[str]:
+def _string_deps(value) -> list[tuple[str, str | None]]:
     if not isinstance(value, list):
         return []
-    names: list[str] = []
+    entries: list[tuple[str, str | None]] = []
     for item in value:
         if isinstance(item, str):
-            name = _requirement_name(item.strip())
+            spec = item.strip()
+            name = _requirement_name(spec)
             if name:
-                names.append(name)
-    return names
+                entries.append((name, spec))
+    return entries
 
 
-def _poetry_names(value) -> list[str]:
+def _poetry_names(value) -> list[tuple[str, str | None]]:
     if not isinstance(value, dict):
         return []
-    return [name for name in value if name.lower() != "python"]
+    return [(name, None) for name in value if name.lower() != "python"]
 
 
 def _package_json_hits(text: str) -> tuple[list[_Hit], str | None]:
@@ -261,18 +330,18 @@ def _package_json_hits(text: str) -> tuple[list[_Hit], str | None]:
     if not isinstance(data, dict):
         return [], "package.json was not an object."
 
-    names: list[str] = []
+    entries: list[tuple[str, str | None]] = []
     for key in ("dependencies", "devDependencies", "optionalDependencies"):
         block = data.get(key)
         if isinstance(block, dict):
-            names.extend(str(name) for name in block)
-    return _hits_for_names(text, names), None
+            entries.extend((str(name), None) for name in block)
+    return _hits_for_names(text, entries), None
 
 
-def _hits_for_names(text: str, names: list[str]) -> list[_Hit]:
+def _hits_for_names(text: str, entries: list[tuple[str, str | None]]) -> list[_Hit]:
     hits: list[_Hit] = []
     seen: set[str] = set()
-    for name in names:
+    for name, spec in entries:
         canonical = _canon(name)
         if canonical in seen:
             continue
@@ -280,17 +349,29 @@ def _hits_for_names(text: str, names: list[str]) -> list[_Hit]:
         if rule is None:
             continue
         seen.add(canonical)
-        line, snippet = _find_dep_line(text, name)
+        line, snippet = _find_dep_line(text, name, spec)
         hits.append(_Hit(rule=rule, kind="dependency", line=line, text=snippet))
     return hits
 
 
-def _find_dep_line(text: str, name: str) -> tuple[int, str]:
-    pattern = re.compile(rf"(?i)(^|[^A-Za-z0-9_.@/-]){re.escape(name)}([^A-Za-z0-9_.@/-]|$)")
-    for line_no, raw in enumerate(text.splitlines(), 1):
-        if pattern.search(raw):
+def _find_dep_line(text: str, name: str, spec: str | None = None) -> tuple[int, str]:
+    """Find a dependency or import line.
+
+    A bare mention, such as a keyword list, is not evidence. Prefer the
+    requirement string, then a line shaped like a dependency declaration.
+    """
+    lines = text.splitlines()
+    if spec:
+        for line_no, raw in enumerate(lines, 1):
+            if spec in raw:
+                return line_no, raw.strip()
+    declaration = re.compile(
+        rf"(?i)(^|\s|[\"']){re.escape(name)}(\s*[<>=!~\[]|\s*=|\s*\"\s*:)"
+    )
+    for line_no, raw in enumerate(lines, 1):
+        if declaration.search(raw):
             return line_no, raw.strip()
-    return 1, name
+    return 1, spec or name
 
 
 def _canon(name: str) -> str:

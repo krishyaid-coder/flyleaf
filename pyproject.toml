@@ -1,6 +1,6 @@
 [project]
 name = "flyleaf"
-version = "0.2.0"
+version = "0.2.1"
 description = "Local inventory of AI components in a repository. Not a legal risk classifier."
 readme = "README.md"
 license = "Apache-2.0"

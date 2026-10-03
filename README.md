@@ -93,7 +93,7 @@ uv run flyleaf scan . -o inventory.json
 
 `scan` exits 0 when it finishes, including when it finds AI libraries. Using PyTorch is not a failed build.
 
-Python files are read with the standard-library AST. `requirements*.txt`, `pyproject.toml`, and `package.json` are read as dependency lists. JavaScript imports inside `.ts` and `.js` files are not parsed yet. Scoped packages such as `@anthropic-ai/sdk` are recognized when they appear in `package.json`.
+Python files and code cells in `.ipynb` notebooks are read with the standard-library AST. `requirements*.txt`, `pyproject.toml`, and `package.json` are read as dependency lists. A keyword that happens to match a package name is not treated as a dependency. JavaScript imports inside `.ts` and `.js` files are not parsed yet. Scoped packages such as `@anthropic-ai/sdk` are recognized when they appear in `package.json`.
 
 A model card counts as present when `MODEL_CARD.md` (or `model_card.md` / `modelcard.md`, markdown or yaml) sits next to the file or at the repository root.
 
