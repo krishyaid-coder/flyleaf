@@ -14,8 +14,9 @@ from pathlib import Path
 from flyleaf import DISCLAIMER, __version__
 from flyleaf.citations import DOCUMENTATION_CITATION_IDS, pack_meta, payloads_for
 from flyleaf.rules import ReviewHint, Rule, match_import, match_package
+from flyleaf.systems import SYSTEMS_FILE, System, assign, claimants, load_systems
 
-SCHEMA_VERSION = "0.2.0"
+SCHEMA_VERSION = "0.4.0"
 
 IGNORE_DIRS = frozenset(
     {
@@ -77,6 +78,9 @@ def scan_path(path: Path) -> dict:
     hits: dict[tuple[str, str], list[_Hit]] = {}
     warnings: list[dict[str, str]] = []
 
+    systems, problems = load_systems(root)
+    warnings.extend({"path": SYSTEMS_FILE.as_posix(), "message": problem} for problem in problems)
+
     for file_path in files:
         rel = file_path.relative_to(root).as_posix()
         kind = _scan_kind(file_path.name)
@@ -108,8 +112,12 @@ def scan_path(path: Path) -> dict:
         for hit in found:
             hits.setdefault((rel, hit.rule.framework), []).append(hit)
 
-    components = [_component(root, rel, framework, group) for (rel, framework), group in hits.items()]
+    components = [
+        _component(root, rel, framework, group, assign(systems, rel))
+        for (rel, framework), group in hits.items()
+    ]
     components.sort(key=lambda item: (item["path"], item["framework"]))
+    warnings.extend(_system_warnings(systems, components))
     warnings.sort(key=lambda item: item["path"])
 
     return {
@@ -120,6 +128,7 @@ def scan_path(path: Path) -> dict:
         "citation_pack": pack_meta(),
         "citations": _used_citations(components),
         "root": str(root),
+        "systems": [_system_block(root, system, components) for system in systems],
         "components": components,
         "warnings": warnings,
     }
@@ -381,19 +390,26 @@ def _canon(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name)
 
 
-def _component(root: Path, rel: str, framework: str, hits: list[_Hit]) -> dict:
+def _component(
+    root: Path,
+    rel: str,
+    framework: str,
+    hits: list[_Hit],
+    system: System | None,
+) -> dict:
     rule = hits[0].rule
     evidence = [
         {"kind": hit.kind, "line": hit.line, "text": hit.text}
         for hit in sorted(hits, key=lambda hit: (hit.line, hit.text))
     ]
-    card = _find_card(root / rel, root)
+    card = _resolve_card(root, rel, system)
     return {
         "id": f"{rel}:{framework}",
         "path": rel,
         "framework": framework,
         "category": rule.category,
         "role_hint": rule.role_hint,
+        "system": system.name if system else None,
         "evidence": evidence,
         "review_hints": [_hint(hint) for hint in rule.review_hints],
         "model_card_status": "present" if card else "missing",
@@ -401,6 +417,65 @@ def _component(root: Path, rel: str, framework: str, hits: list[_Hit]) -> dict:
         "model_card_sha256": hashlib.sha256(card.read_bytes()).hexdigest() if card else None,
         "documentation_citation_ids": list(DOCUMENTATION_CITATION_IDS),
     }
+
+
+def _resolve_card(root: Path, rel: str, system: System | None) -> Path | None:
+    """A declared system card is the answer for every component in it.
+
+    One system, one card. Without a declared card, fall back to looking beside
+    the file and at the repository root.
+    """
+    if system is not None and system.card:
+        candidate = root / system.card
+        return candidate if candidate.is_file() else None
+    return _find_card(root / rel, root)
+
+
+def _system_block(root: Path, system: System, components: list[dict]) -> dict:
+    members = [item for item in components if item["system"] == system.name]
+    card = (root / system.card) if system.card else None
+    present = bool(card and card.is_file())
+    block = system.payload()
+    block.update(
+        {
+            "model_card_status": "present" if present else ("missing" if card else "undeclared"),
+            "model_card_path": system.card if present else None,
+            "model_card_sha256": hashlib.sha256(card.read_bytes()).hexdigest() if present else None,
+            "component_ids": [item["id"] for item in members],
+            "frameworks": sorted({item["framework"] for item in members}),
+        }
+    )
+    return block
+
+
+def _system_warnings(systems: list[System], components: list[dict]) -> list[dict[str, str]]:
+    warnings: list[dict[str, str]] = []
+    label = SYSTEMS_FILE.as_posix()
+    claimed = {item["system"] for item in components}
+    for system in systems:
+        if system.name not in claimed:
+            warnings.append(
+                {
+                    "path": label,
+                    "message": (
+                        f"System '{system.name}' claims no detected component. "
+                        "Check the includes patterns."
+                    ),
+                }
+            )
+    for path in dict.fromkeys(item["path"] for item in components):
+        names = claimants(systems, path)
+        if len(names) > 1:
+            warnings.append(
+                {
+                    "path": path,
+                    "message": (
+                        f"Claimed by {', '.join(names)}. The first declared system, "
+                        f"'{names[0]}', takes it."
+                    ),
+                }
+            )
+    return warnings
 
 
 def _hint(hint: ReviewHint) -> dict:

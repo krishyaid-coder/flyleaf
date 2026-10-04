@@ -6,6 +6,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
+from flyleaf import __version__
 from flyleaf.cli import app
 from flyleaf.scan import scan_path
 
@@ -96,6 +97,12 @@ def test_cli_writes_markdown_without_failing_on_findings(tmp_path: Path) -> None
 def test_cli_missing_path(tmp_path: Path) -> None:
     result = runner.invoke(app, ["scan", str(tmp_path / "missing")])
     assert result.exit_code == 2
+
+
+def test_version_flag_prints_the_version() -> None:
+    result = runner.invoke(app, ["--version"])
+    assert result.exit_code == 0
+    assert result.stdout.strip() == __version__
 
 
 def test_pyproject_keyword_is_not_the_evidence_line(tmp_path: Path) -> None:
