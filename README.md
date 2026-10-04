@@ -19,6 +19,7 @@ flowchart TD
   repo[Repository]
   rules[Detection rules]
   pack[Citation pack]
+  declared[Declared systems]
   scan[flyleaf scan]
   inventory[Inventory]
   brief[flyleaf brief]
@@ -29,6 +30,7 @@ flowchart TD
   repo --> scan
   rules --> scan
   pack --> scan
+  declared --> scan
   scan --> inventory
   repo --> brief
   pack --> brief
@@ -40,22 +42,45 @@ flowchart TD
   cite --> person
 ```
 
-`brief` scans the same rules at two revisions and diffs the inventories. Line numbers can move without a finding. A finding appears when a component is added or removed, when the import or dependency text changes, or when the model card content changes.
+`brief` scans the same rules at two states and diffs the inventories. Line numbers can move without a finding. A finding appears when a component is added or removed, when the import or dependency text changes, or when the model card content changes. The base is a git ref, or the recorded baseline.
 
 ```mermaid
 flowchart LR
-  baseRef[Base git ref]
+  baseRef[Base git ref or baseline]
   headRef[Head git ref or working tree]
   scanBase[Scan base]
   scanHead[Scan head]
   diff[Diff inventories]
+  graded[Grade impact and severity]
+  waivers[Apply waivers]
+  rollup[Roll up declared systems]
   memo[Brief with citations]
 
   baseRef --> scanBase
   headRef --> scanHead
   scanBase --> diff
   scanHead --> diff
-  diff --> memo
+  diff --> graded --> waivers --> rollup --> memo
+```
+
+Waivers are applied to components first, then to systems, so a waiver on one file shrinks a system finding rather than silencing it.
+
+A waiver suppresses a finding for a stated reason, until a stated date. It is never silent and never permanent. An expired waiver puts the finding back in front of a person.
+
+```mermaid
+flowchart LR
+  finding[Finding]
+  check{Covering waiver?}
+  valid{Still in date?}
+  active[Active finding]
+  waived[Waived and logged]
+  reopened[Reopened, waiver expired]
+
+  finding --> check
+  check -->|no| active
+  check -->|yes| valid
+  valid -->|yes| waived
+  valid -->|no| reopened
 ```
 
 The pack moves only when you publish a new version. A scan does not fetch the law.
@@ -74,7 +99,31 @@ flowchart LR
 
 A component is one detected framework in one file: `app.py` importing `openai`, or `pyproject.toml` depending on `scikit-learn`. That is evidence. An AI system is a grouping a person makes from those components. flyleaf does not invent that grouping, and it does not assign a risk tier.
 
+You can declare the grouping yourself. See Systems below. Once declared, a system is what the brief reports and what `card` scaffolds, so one system needs one card rather than one per file.
+
 Status values on a finding are `missing` and `needs_review`. `missing` means a model card file was not found, or was removed. `needs_review` means a person should read the cited provision against the change. The tool does not declare that a law was breached.
+
+## Impact and severity
+
+Every finding carries an impact and a severity.
+
+`impact` is `runtime` when the detected code changed, and `documentation` when only the model card did. A new dependency behaves differently from a reworded card, so the two are not mixed.
+
+`severity` is `high`, `medium`, or `low`. It ranks how much engineering attention a change deserves. It is not a legal risk tier and says nothing about whether an obligation applies.
+
+| Change | Impact | Severity |
+|---|---|---|
+| `added` with no model card | runtime | high |
+| `added` with a model card | runtime | medium |
+| `removed` | runtime | medium |
+| `evidence_changed` | runtime | high |
+| `card_stale` | runtime | high |
+| `evidence_and_card_changed` | runtime | medium |
+| `card_removed` | documentation | high |
+| `card_added` | documentation | low |
+| `card_changed` | documentation | low |
+
+A system finding takes the severity of its worst component, and its impact is `runtime` when any component inside it changed code.
 
 ## Install
 
@@ -95,28 +144,142 @@ uv run flyleaf scan . -o inventory.json
 
 Python files and code cells in `.ipynb` notebooks are read with the standard-library AST. `requirements*.txt`, `pyproject.toml`, and `package.json` are read as dependency lists. A keyword that happens to match a package name is not treated as a dependency. JavaScript imports inside `.ts` and `.js` files are not parsed yet. Scoped packages such as `@anthropic-ai/sdk` are recognized when they appear in `package.json`.
 
-A model card counts as present when `MODEL_CARD.md` (or `model_card.md` / `modelcard.md`, markdown or yaml) sits next to the file or at the repository root.
+A model card counts as present when `MODEL_CARD.md` (or `model_card.md` / `modelcard.md`, markdown or yaml) sits next to the file or at the repository root. A component in a declared system uses that system's card instead.
 
 JSON is the default. Every inventory includes:
 
 - `citation_pack.version` and `citation_pack.as_of`
 - `citations`, the entries this report actually used, each with pinpoint, quote, note, CELEX, and source URL
-- `components[]` with `path`, `framework`, `category`, `role_hint`, `evidence`, `review_hints`, `model_card_status`, and `documentation_citation_ids`
+- `components[]` with `path`, `framework`, `category`, `role_hint`, `system`, `evidence`, `review_hints`, `model_card_status`, and `documentation_citation_ids`
+- `systems[]`, the groupings you declared, each with its owner, card status, and component ids
 - a disclaimer
 - `warnings` for files that could not be parsed
 
 `role_hint` is one of `api_client`, `orchestration`, or `local_ml`. It tells you which definition to read. It is not a finding that you are a provider or a deployer.
+
+## Systems
+
+One library used in three files is three components. Whether it is one system or three depends on who the output reaches and what for, and that is not in the import. flyleaf will not guess it, so you declare it in `.flyleaf/systems.toml`. Commit that file.
+
+```toml
+[[system]]
+name = "support-bot"
+owner = "platform@example.com"
+card = "docs/cards/support-bot.md"
+includes = ["app/chat/*", "pyproject.toml"]
+
+[[system]]
+name = "ticket-summarizer"
+owner = "support@example.com"
+card = "docs/cards/ticket-summarizer.md"
+includes = ["jobs/summarize.py"]
+```
+
+`name` and `includes` are required. `card` and `owner` are optional. An entry missing a required field is ignored, reported as a warning, and its files fall back to standing alone.
+
+An include is an exact path, a glob, or a directory prefix, all relative to the repository root and written with forward slashes. A `*` spans separators, so `app/*` claims everything beneath `app`. A file claimed by two systems goes to the first one declared, and the scan warns that it was contested. A system that claims no detected component also warns, because that usually means a pattern is wrong.
+
+```mermaid
+flowchart LR
+  fileA[app/chat/bot.py]
+  fileB[pyproject.toml]
+  fileC[jobs/summarize.py]
+  compA[Component openai]
+  compB[Component openai]
+  compC[Component openai]
+  sysA[System support-bot]
+  sysC[System ticket-summarizer]
+  cardA[One card]
+  cardC[One card]
+
+  fileA --> compA --> sysA
+  fileB --> compB --> sysA
+  fileC --> compC --> sysC
+  sysA --> cardA
+  sysC --> cardC
+```
+
+Declaring a system changes three things. The declared `card` becomes the card for every component in the system, so one file documents the whole thing. The brief reports one finding per system instead of one per file, listing the components inside it as evidence. `flyleaf card` writes one scaffold per system.
+
+Components you do not claim are still reported individually. Nothing is hidden by leaving the file out.
 
 ## Brief
 
 ```bash
 uv run flyleaf brief main~1
 uv run flyleaf brief v0.1.0 HEAD --format markdown
+uv run flyleaf brief --baseline
 ```
 
-The first form compares a git ref with the working tree. The second compares two refs. `brief` exits 0 when the diff finishes, including when it finds gaps. It exits 2 when the path is not a git repository or the ref does not resolve.
+The first form compares a git ref with the working tree. The second compares two refs. The third compares the working tree against the approved baseline. `brief` exits 2 when the path is not a git repository, the ref does not resolve, or no baseline has been recorded.
 
 A quiet brief means no component was added or removed, no detected evidence text changed, and no model card content changed. An unchanged missing card stays in `scan`. `brief` reports the delta.
+
+## Baseline
+
+A baseline is the inventory as it stood at the last sign-off.
+
+```bash
+uv run flyleaf baseline --approved-by you@example.com --rev v1.2.0
+uv run flyleaf brief --baseline
+```
+
+This writes `.flyleaf/baseline.json`. Commit it. Drift is then measured against an approved state rather than an arbitrary pair of commits, and the brief records who approved it and when.
+
+## Waivers
+
+A finding is suppressed only by a written waiver in `.flyleaf/waivers.toml`. Commit that file too. It is the audit trail.
+
+```toml
+[[waiver]]
+component = "app.py:openai"
+reason = "Internal prototype, not shipped. Card lands with the 1.3 release."
+approved_by = "you@example.com"
+expires = "2026-12-31"
+
+[[waiver]]
+component = "notebooks/train.ipynb:torch"
+change = "card_stale"
+reason = "Card rewrite tracked in issue 42."
+approved_by = "you@example.com"
+expires = "2026-11-15"
+```
+
+`component`, `reason`, `approved_by`, and `expires` are all required. An entry missing any of them is ignored, reported as a warning, and the finding stays active. Omit `change` to cover every change on that component, or name one change to be narrower.
+
+To waive a whole declared system, name it as `system:<name>`:
+
+```toml
+[[waiver]]
+component = "system:support-bot"
+reason = "Card rewrite tracked in issue 42."
+approved_by = "you@example.com"
+expires = "2026-11-15"
+```
+
+A waived finding is not deleted. It moves to the `waived` list in the output, with the reason, the approver, the expiry date, and the days remaining. When the date passes, the finding returns to `findings` with `waiver_state` set to `expired`, and the summary names the lapsed waiver. A waiver inside 14 days of expiry raises a warning so renewal is not a surprise.
+
+## Continuous integration
+
+```bash
+uv run flyleaf brief --baseline --fail-on high --format sarif -o flyleaf.sarif
+```
+
+`--fail-on` takes `none`, `low`, `medium`, or `high`, and defaults to `none`. The command exits 1 when an active finding reaches that severity, and 0 otherwise. Waived findings never trigger the exit code. A team picks its own policy, for example failing on runtime drift while only warning on documentation changes.
+
+`--format sarif` writes SARIF 2.1.0, so GitHub renders the findings as annotations on the pull request. High maps to `error`, medium to `warning`, and low to `note`.
+
+```yaml
+- name: flyleaf drift check
+  run: |
+    pipx run flyleaf brief --baseline --fail-on high --format sarif -o flyleaf.sarif
+- uses: github/codeql-action/upload-sarif@v3
+  if: always()
+  with:
+    sarif_file: flyleaf.sarif
+```
+
+Use `fetch-depth: 0` on the checkout step when comparing git refs rather than the baseline.
 
 ## Card
 
@@ -124,7 +287,9 @@ A quiet brief means no component was added or removed, no detected evidence text
 uv run flyleaf card . -o flyleaf-cards
 ```
 
-This writes one markdown scaffold per component. The file is a draft with blanks for purpose, role, data, limitations, oversight, and the Annex III use case. Existing scaffolds are kept unless you pass `--force`. The scaffolds are not named `MODEL_CARD.md`, so they do not count as present until a person places a card under one of the names above.
+This writes one markdown scaffold per declared system, then one per component that no system claimed. The file is a draft with blanks for purpose, role, data, limitations, oversight, and the Annex III use case. A system scaffold lists every component inside it so the evidence is in one place. Existing scaffolds are kept unless you pass `--force`.
+
+Scaffolds land under `--output` and never at a declared `card` path, so an empty draft is never counted as documentation. Move the file into place once it says something. A per-component scaffold has to be renamed to `MODEL_CARD.md` to count.
 
 ## Cite
 
@@ -149,6 +314,16 @@ Hosted model clients: OpenAI, Anthropic, Google GenAI, Mistral, Cohere.
 Orchestration: LangChain, LlamaIndex, LangGraph.
 
 Machine learning: PyTorch, TensorFlow, scikit-learn, Transformers, XGBoost.
+
+## Known limits
+
+Detection is Python and notebooks only. TypeScript and JavaScript source files are not parsed, though their dependencies are read from `package.json`.
+
+A component is one framework in one file, so a dependency entry and the import that uses it are two components. Declare a system to group them. Without a declaration they stay separate, because the grouping is a human judgement and flyleaf does not guess it.
+
+A declared system is only as good as its `includes` patterns. A new file that no pattern covers is reported as a loose component, not quietly added to the nearest system.
+
+`brief` compares the text of detected evidence, not line numbers, so moving code does not raise a finding. A change elsewhere in a manifest does not raise one either. A rename does count as a removal plus an addition.
 
 ## Privacy
 
