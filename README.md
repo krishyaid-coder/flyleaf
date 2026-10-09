@@ -329,7 +329,7 @@ permissions:
   security-events: write
 
 steps:
-  - uses: actions/checkout@v4
+  - uses: actions/checkout@v7
     with:
       fetch-depth: 0
   - uses: krishyaid-coder/flyleaf@v0.5.0
