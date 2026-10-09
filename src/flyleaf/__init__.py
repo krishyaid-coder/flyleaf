@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Inventory AI components in a repository and list areas to review."""
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 DISCLAIMER = (
     "flyleaf lists AI components and areas to review. "

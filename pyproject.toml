@@ -1,9 +1,10 @@
 [project]
 name = "flyleaf"
-version = "0.4.0"
+version = "0.5.0"
 description = "Local inventory of AI components in a repository. Not a legal risk classifier."
 readme = "README.md"
 license = "Apache-2.0"
+license-files = ["LICENSE"]
 authors = [
     { name = "Krishna Dahale", email = "krishy.ai.d@gmail.com" }
 ]
@@ -16,13 +17,19 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
+    "Intended Audience :: Legal Industry",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Documentation",
 ]
+
+[project.urls]
+Homepage = "https://github.com/krishyaid-coder/flyleaf"
+Repository = "https://github.com/krishyaid-coder/flyleaf"
+Issues = "https://github.com/krishyaid-coder/flyleaf/issues"
 
 [project.scripts]
 flyleaf = "flyleaf.cli:main"
@@ -30,6 +37,7 @@ flyleaf = "flyleaf.cli:main"
 [dependency-groups]
 dev = [
     "pytest>=8",
+    "ruff>=0.6",
 ]
 
 [build-system]
@@ -38,3 +46,15 @@ build-backend = "uv_build"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+# Pinned so a ruff release cannot change what passes.
+target-version = "py311"
+line-length = 110
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "PIE", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+# Calling typer.Option and typer.Argument in a default is the documented idiom.
+"src/flyleaf/cli.py" = ["B008"]

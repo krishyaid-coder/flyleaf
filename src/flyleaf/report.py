@@ -4,7 +4,7 @@
 
 import json
 
-from flyleaf import DISCLAIMER, __version__
+from flyleaf import DISCLAIMER, __version__, attribution
 from flyleaf.citations import CHANGELOG, CITATIONS, PACK_VERSION, citation_payload
 from flyleaf.severity import SEVERITY_NOTE
 
@@ -38,7 +38,10 @@ def render_citations(citation_id: str | None, changelog: bool, output_format: st
     else:
         if citation_id not in CITATIONS:
             raise KeyError(citation_id)
-        document = {"citation_pack": {"version": PACK_VERSION}, "citations": {citation_id: citation_payload(citation_id)}}
+        document = {
+            "citation_pack": {"version": PACK_VERSION},
+            "citations": {citation_id: citation_payload(citation_id)},
+        }
     if output_format == "json":
         return json.dumps(document, indent=2) + "\n"
     if output_format != "markdown":
@@ -162,6 +165,7 @@ def _brief_markdown(brief: dict) -> str:
     if not findings:
         lines.append("No compliance-relevant change.")
         lines.append("")
+    lines.extend(_reviewer_lines(findings))
     for finding in findings:
         lines.extend(_finding_lines(finding, brief["citations"], pack))
     if waived:
@@ -186,6 +190,42 @@ def _brief_markdown(brief: dict) -> str:
     return "\n".join(lines)
 
 
+def reviewer_of(finding: dict) -> str:
+    """Who should look at this finding.
+
+    The person who made the change is asked first, because they have the
+    context. The declared owner stands behind it either way.
+    """
+    author = finding.get("author")
+    if author and not author["uncommitted"] and not author["is_bot"]:
+        return author["email"] or author["name"] or "unassigned"
+    owner = finding.get("owner")
+    if owner:
+        return owner
+    if author:
+        return attribution.label(author)
+    return "unassigned"
+
+
+def _reviewer_lines(findings: list[dict]) -> list[str]:
+    if not findings:
+        return []
+    buckets: dict[str, list[dict]] = {}
+    for finding in findings:
+        buckets.setdefault(reviewer_of(finding), []).append(finding)
+    lines = ["## Who should look at this", ""]
+    for reviewer, owned in sorted(buckets.items(), key=lambda item: (-len(item[1]), item[0])):
+        subjects = ", ".join(dict.fromkeys(_subject(item) for item in owned))
+        lines.append(f"- {reviewer}: {len(owned)} ({_severity_tally(owned)}). {subjects}.")
+    lines.append("")
+    lines.append(
+        "Names come from the declared system owner and from git blame on the line "
+        "that changed. Blame names a line, not a fault."
+    )
+    lines.append("")
+    return lines
+
+
 def _subject(finding: dict) -> str:
     if finding.get("kind") == "system":
         return f"system {finding['system']} ({finding['framework']})"
@@ -200,6 +240,8 @@ def _finding_lines(finding: dict, citations: dict, pack: str) -> list[str]:
         f"- Impact: {finding['impact']}",
         f"- Status: {finding['status']}",
         f"- Model card: {finding['model_card_status']}",
+        f"- Owner: {finding.get('owner') or 'none declared'}",
+        f"- Last changed by: {attribution.label(finding.get('author'))}",
         f"- {finding['summary']}",
     ]
     if finding.get("waiver_state") == "expired":
@@ -210,7 +252,8 @@ def _finding_lines(finding: dict, citations: dict, pack: str) -> list[str]:
         for member in members:
             lines.append(
                 f"  - `{member['path']}` line {member['line']} ({member['framework']}), "
-                f"{member['change']}, severity {member['severity']}"
+                f"{member['change']}, severity {member['severity']}, "
+                f"last changed by {attribution.label(member.get('author'))}"
             )
     lines.append("- Read:")
     lines.extend(_citation_lines(finding["citation_ids"], citations, pack))
@@ -256,6 +299,8 @@ def _sarif(brief: dict) -> dict:
                     "status": finding["status"],
                     "component": finding["component_id"],
                     "system": finding.get("system"),
+                    "owner": finding.get("owner"),
+                    "author": attribution.label(finding.get("author")),
                 },
             }
         )

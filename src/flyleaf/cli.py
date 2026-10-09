@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Command line interface."""
 
+import json
 from pathlib import Path
 
 import typer
@@ -83,6 +84,11 @@ def brief(
         "--fail-on",
         help="Exit 1 when an active finding reaches this severity: none, low, medium, or high.",
     ),
+    blame: bool = typer.Option(
+        True,
+        "--blame/--no-blame",
+        help="Name who last changed the evidence, read from local git blame.",
+    ),
     output_format: str = typer.Option("json", "--format", "-f", help="json, markdown, or sarif."),
     output: Path | None = typer.Option(None, "--output", "-o", help="Write the brief to this file."),
 ) -> None:
@@ -100,7 +106,7 @@ def brief(
         raise typer.Exit(code=2)
 
     try:
-        document = build_brief(path, base, head, use_baseline=use_baseline)
+        document = build_brief(path, base, head, use_baseline=use_baseline, blame=blame)
     except FileNotFoundError:
         typer.echo(f"Path not found: {path}", err=True)
         raise typer.Exit(code=2) from None
@@ -121,6 +127,34 @@ def brief(
             err=True,
         )
         raise typer.Exit(code=1)
+
+
+@app.command(name="render")
+def render_command(
+    document: Path = typer.Argument(..., help="A brief or inventory saved with --format json."),
+    output_format: str = typer.Option("markdown", "--format", "-f", help="json, markdown, or sarif."),
+    output: Path | None = typer.Option(None, "--output", "-o", help="Write the report to this file."),
+) -> None:
+    """Re-render a saved report in another format.
+
+    No scan and no git, so one scan can produce every format a pipeline wants,
+    and an archived report can be read back without the repository.
+    """
+    _check_format(output_format, {"json", "markdown", "sarif"})
+    try:
+        loaded = json.loads(document.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        typer.echo(f"Could not read {document}: {exc}", err=True)
+        raise typer.Exit(code=2) from None
+    if not isinstance(loaded, dict) or loaded.get("kind") not in {"brief", "inventory"}:
+        typer.echo(f"{document} is not a flyleaf brief or inventory.", err=True)
+        raise typer.Exit(code=2)
+    try:
+        text = render(loaded, output_format)
+    except (ValueError, KeyError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from None
+    _emit(text, output)
 
 
 @app.command(name="baseline")

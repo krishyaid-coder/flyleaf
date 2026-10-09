@@ -1,7 +1,12 @@
 # flyleaf
 
+[![ci](https://github.com/krishyaid-coder/flyleaf/actions/workflows/ci.yml/badge.svg)](https://github.com/krishyaid-coder/flyleaf/actions/workflows/ci.yml)
+[![pypi](https://img.shields.io/pypi/v/flyleaf)](https://pypi.org/project/flyleaf/)
+[![python](https://img.shields.io/pypi/pyversions/flyleaf)](https://pypi.org/project/flyleaf/)
+[![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+
 <p align="center">
-  <img src="flyleaf.png" alt="flyleaf" width="220">
+  <img src="https://raw.githubusercontent.com/krishyaid-coder/flyleaf/main/flyleaf.png" alt="flyleaf" width="220">
 </p>
 
 flyleaf is a local documentation clerk for AI code. It inventories the AI libraries in a repository, cites the EU AI Act provisions a person should read, and reports when a model card is missing or has fallen behind the code.
@@ -9,6 +14,10 @@ flyleaf is a local documentation clerk for AI code. It inventories the AI librar
 A flyleaf is the blank page bound in front of a book, the page where you say what the book is. This tool prepares that page and keeps a record of when the book moves on.
 
 Legal classification depends on the use case. The use case is not in the import. flyleaf prepares the inventory and the questions. A person decides what the law requires. This output is not legal advice.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/krishyaid-coder/flyleaf/main/demo.gif" alt="flyleaf finding documentation drift, waiving one finding, and reopening a lapsed waiver" width="820">
+</p>
 
 ## Architecture
 
@@ -128,8 +137,19 @@ A system finding takes the severity of its worst component, and its impact is `r
 ## Install
 
 ```bash
+uv tool install flyleaf
+flyleaf --help
+```
+
+`pipx install flyleaf` and `pip install flyleaf` work too. Python 3.11 or later. The only runtime dependency is typer.
+
+To work on flyleaf itself:
+
+```bash
+git clone https://github.com/krishyaid-coder/flyleaf
+cd flyleaf
 uv sync
-uv run flyleaf --help
+uv run pytest
 ```
 
 ## Scan
@@ -203,6 +223,37 @@ Declaring a system changes three things. The declared `card` becomes the card fo
 
 Components you do not claim are still reported individually. Nothing is hidden by leaving the file out.
 
+## Who owns a finding
+
+A finding that names nobody is a finding nobody does. Every finding in a brief carries two names, and they answer different questions.
+
+`owner` is the `owner` field of the declared system. It is accountable for the system whoever happened to type the change.
+
+`author` is read from `git blame` on the evidence line that changed. It is whoever last touched that line, which is usually the person who can answer the question fastest.
+
+```mermaid
+flowchart TD
+  finding[Finding]
+  blame{Author from git blame?}
+  bot{Is it a bot?}
+  owner{Declared owner?}
+  askAuthor[Ask the author]
+  askOwner[Ask the owner]
+  unassigned[Unassigned, and says so]
+
+  finding --> blame
+  blame -->|yes| bot
+  blame -->|no| owner
+  bot -->|no| askAuthor
+  bot -->|yes| owner
+  owner -->|yes| askOwner
+  owner -->|no| unassigned
+```
+
+The brief opens with a "Who should look at this" section grouping the findings by person. A bot is never asked to review, so a Dependabot bump falls through to the declared owner. An uncommitted edit has no author yet and says so rather than guessing. A finding with neither name reads `unassigned`, which is a true statement about your repository and not a gap in the tool.
+
+Blame names a line, not a fault. A reformat, a file move, or a bulk upgrade will put the wrong name on a finding, so the report always says where the name came from. Pass `--no-blame` to leave authors out entirely, for example if you would rather not have committer emails in a report that leaves the repository.
+
 ## Brief
 
 ```bash
@@ -269,17 +320,48 @@ uv run flyleaf brief --baseline --fail-on high --format sarif -o flyleaf.sarif
 
 `--format sarif` writes SARIF 2.1.0, so GitHub renders the findings as annotations on the pull request. High maps to `error`, medium to `warning`, and low to `note`.
 
+On GitHub, use the action:
+
 ```yaml
-- name: flyleaf drift check
-  run: |
-    pipx run flyleaf brief --baseline --fail-on high --format sarif -o flyleaf.sarif
-- uses: github/codeql-action/upload-sarif@v3
-  if: always()
-  with:
-    sarif_file: flyleaf.sarif
+permissions:
+  contents: read
+  pull-requests: write
+  security-events: write
+
+steps:
+  - uses: actions/checkout@v4
+    with:
+      fetch-depth: 0
+  - uses: krishyaid-coder/flyleaf@v0.5.0
+    id: flyleaf
+    with:
+      baseline: "true"
+      fail-on: high
+  - uses: github/codeql-action/upload-sarif@v3
+    if: always()
+    with:
+      sarif_file: ${{ steps.flyleaf.outputs.sarif-file }}
 ```
 
-Use `fetch-depth: 0` on the checkout step when comparing git refs rather than the baseline.
+The action posts the brief as a pull request comment and edits that same comment on every later push, because a fresh comment per push is how a review bot teaches people to scroll past it. Set `comment: "false"` to turn it off. It needs `pull-requests: write`.
+
+Every artefact is produced before the severity threshold is applied, so a failing check still leaves the comment and the annotations behind for the author to read.
+
+`fetch-depth: 0` gives the action the history it needs for `git blame` and for comparing two refs. Without it, authors come back unknown.
+
+SARIF annotations through `upload-sarif` are free on public repositories but need GitHub Advanced Security on private ones. The pull request comment works everywhere, which is why the action posts one rather than relying on annotations alone.
+
+Pass `base` and `head` instead of `baseline` to compare two refs.
+
+## Render
+
+```bash
+uv run flyleaf brief --baseline --format json -o brief.json
+uv run flyleaf render brief.json --format markdown
+uv run flyleaf render brief.json --format sarif -o brief.sarif
+```
+
+`render` re-renders a saved report without scanning or reading git, so a pipeline that wants three formats pays for one scan, and an archived brief can be read back long after the branch is gone.
 
 ## Card
 
@@ -327,4 +409,4 @@ A declared system is only as good as its `includes` patterns. A new file that no
 
 ## Privacy
 
-Scanning reads the local tree and, for `brief`, local git history. There is no telemetry, no account, and no network call.
+Scanning reads the local tree and, for `brief`, local git history including `git blame`. There is no telemetry, no account, and no network call. The GitHub Action is the one place anything is sent anywhere, and it posts to your own repository with your own token. Use `--no-blame` to keep committer names out of a report.

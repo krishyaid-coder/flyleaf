@@ -1,0 +1,47 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --locked --python ${{ matrix.python }}
+      - run: uv run ruff check .
+      - run: uv run pytest -q
+
+  self_check:
+    # flyleaf reads its own repository. It detects no AI libraries here, so this
+    # proves the commands run end to end rather than that the tree is clean.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run flyleaf scan . --format markdown
+      - run: uv run flyleaf cite --changelog
+      - run: uv run flyleaf brief HEAD~1 HEAD --format json -o flyleaf-brief.json
+      - run: uv run flyleaf render flyleaf-brief.json --format markdown
+      - run: uv run flyleaf render flyleaf-brief.json --format sarif -o flyleaf.sarif
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flyleaf-sarif
+          path: flyleaf.sarif

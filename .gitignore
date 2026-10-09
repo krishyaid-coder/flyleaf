@@ -6,3 +6,5 @@ dist/
 build/
 .coverage
 htmlcov/
+.ruff_cache/
+flyleaf-cards/

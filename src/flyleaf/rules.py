@@ -226,10 +226,10 @@ def match_import(module: str) -> Rule | None:
     best_len = -1
     for rule in RULES:
         for root in rule.import_roots:
-            if module == root or module.startswith(root + "."):
-                if len(root) > best_len:
-                    best = rule
-                    best_len = len(root)
+            covers = module == root or module.startswith(root + ".")
+            if covers and len(root) > best_len:
+                best = rule
+                best_len = len(root)
     return best
 
 

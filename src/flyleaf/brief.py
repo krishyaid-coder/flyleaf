@@ -11,7 +11,7 @@ import tempfile
 from datetime import date
 from pathlib import Path
 
-from flyleaf import DISCLAIMER, __version__
+from flyleaf import DISCLAIMER, __version__, attribution
 from flyleaf import baseline as baseline_store
 from flyleaf import severity as severity_grades
 from flyleaf import waivers as waiver_store
@@ -29,6 +29,7 @@ def build_brief(
     head: str | None,
     use_baseline: bool = False,
     today: date | None = None,
+    blame: bool = True,
 ) -> dict:
     """Diff a base state against a head state.
 
@@ -61,8 +62,11 @@ def build_brief(
         head_meta = {"ref": head, "rev": head_rev, "dirty": False}
         head_inventory = _scan_ref(repo, head_rev)
 
+    found = _diff(base_inventory, head_inventory)
+    _attribute(repo, found, head_inventory, head_meta, base_meta, blame)
+
     loaded, warnings = waiver_store.load_waivers(repo)
-    findings, waived = _partition(_diff(base_inventory, head_inventory), loaded, now)
+    findings, waived = _partition(found, loaded, now)
     findings, system_waived = _partition(_rollup(findings), loaded, now)
     waived.extend(system_waived)
     warnings.extend(_expiry_warnings(waived, now))
@@ -88,6 +92,30 @@ def build_brief(
         "waived": waived,
         "warnings": warnings,
     }
+
+
+def _attribute(
+    repo: Path,
+    findings: list[dict],
+    head_inventory: dict,
+    head_meta: dict,
+    base_meta: dict,
+    blame: bool,
+) -> None:
+    """Put a name on every finding, from the declared owner and from git blame."""
+    owners = {
+        system["name"]: system.get("owner")
+        for system in head_inventory.get("systems") or []
+    }
+    head_rev = None if head_meta["ref"] == "working tree" else head_meta["rev"]
+    for finding in findings:
+        finding["owner"] = owners.get(finding.get("system") or "")
+        if not blame:
+            finding["author"] = None
+            continue
+        # A removed component is not in the head tree, so blame the base.
+        rev = base_meta.get("rev") if finding["change"] == "removed" else head_rev
+        finding["author"] = attribution.last_author(repo, rev, finding["path"], finding["line"])
 
 
 def highest_severity(brief: dict) -> str | None:
@@ -195,6 +223,11 @@ def _system_finding(name: str, members: list[dict]) -> dict:
                 citation_ids.append(citation_id)
     frameworks = sorted({member["framework"] for member in members})
     changes = sorted({member["change"] for member in members})
+    authors: list[dict] = []
+    for member in members:
+        author = member.get("author")
+        if author and author not in authors:
+            authors.append(author)
     missing = any(member["model_card_status"] == "missing" for member in members)
     if len(members) == 1:
         summary = f"System '{name}': {lead['summary']}"
@@ -221,6 +254,9 @@ def _system_finding(name: str, members: list[dict]) -> dict:
         "summary": summary,
         "model_card_status": "missing" if missing else "present",
         "citation_ids": citation_ids,
+        "owner": lead.get("owner"),
+        "author": lead.get("author"),
+        "authors": authors,
         "members": [_member(member) for member in members],
         "waiver": None,
         "waiver_state": "none",
@@ -236,6 +272,7 @@ def _member(finding: dict) -> dict:
         "change": finding["change"],
         "impact": finding["impact"],
         "severity": finding["severity"],
+        "author": finding.get("author"),
     }
 
 
@@ -333,6 +370,8 @@ def _finding(component: dict, change: str, status: str, summary: str) -> dict:
         "summary": summary,
         "model_card_status": component["model_card_status"],
         "citation_ids": citation_ids,
+        "owner": None,
+        "author": None,
         "waiver": None,
         "waiver_state": "none",
     }

@@ -93,7 +93,8 @@ CITATIONS: dict[str, Citation] = {
             "Regulation (EU) 2026/1744 replaced the second subparagraph of Article 11(1): "
             "SMEs, including start-ups, and small mid-caps may supply the Annex IV elements "
             "in a simplified form once the Commission establishes that form. "
-            "A missing or stale model card is a gap in the repository. It is not a finding that Article 11 has been breached."
+            "A missing or stale model card is a gap in the repository. "
+            "It is not a finding that Article 11 has been breached."
         ),
         source_url=_AI_ACT_URL,
     ),
@@ -112,7 +113,8 @@ CITATIONS: dict[str, Citation] = {
         note=(
             "Read this when people interact with generated output. "
             "The scan does not see the interface, so it cannot tell whether the duty applies. "
-            "Regulation (EU) 2026/1744 replaced Article 50(7), which concerns codes of practice for marking synthetic content."
+            "Regulation (EU) 2026/1744 replaced Article 50(7), which concerns codes of "
+            "practice for marking synthetic content."
         ),
         source_url=_AI_ACT_URL,
     ),

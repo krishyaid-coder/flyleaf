@@ -16,7 +16,7 @@ from flyleaf.citations import DOCUMENTATION_CITATION_IDS, pack_meta, payloads_fo
 from flyleaf.rules import ReviewHint, Rule, match_import, match_package
 from flyleaf.systems import SYSTEMS_FILE, System, assign, claimants, load_systems
 
-SCHEMA_VERSION = "0.4.0"
+SCHEMA_VERSION = "0.5.0"
 
 IGNORE_DIRS = frozenset(
     {
@@ -263,7 +263,7 @@ def _requirement_hits(text: str) -> list[_Hit]:
     hits: list[_Hit] = []
     for line_no, raw in enumerate(text.splitlines(), 1):
         stripped = raw.strip()
-        if not stripped or stripped.startswith("#") or stripped.startswith("-"):
+        if not stripped or stripped.startswith(("#", "-")):
             continue
         name = _requirement_name(stripped)
         if not name:

@@ -3,7 +3,7 @@
 """A baseline is the inventory as it stood at the last sign-off."""
 
 import json
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from flyleaf import __version__
@@ -26,7 +26,7 @@ def write_baseline(repo: Path, rev: str | None, approved_by: str | None) -> Path
     document = {
         "kind": "baseline",
         "tool": {"name": "flyleaf", "version": __version__},
-        "recorded_at": datetime.now(timezone.utc).date().isoformat(),
+        "recorded_at": datetime.now(UTC).date().isoformat(),
         "rev": rev,
         "approved_by": approved_by,
         "inventory": inventory,
@@ -63,4 +63,4 @@ def describe(document: dict) -> dict:
 
 
 def today() -> date:
-    return datetime.now(timezone.utc).date()
+    return datetime.now(UTC).date()
