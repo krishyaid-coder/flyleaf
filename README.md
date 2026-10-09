@@ -1,9 +1,9 @@
 # flyleaf
 
 [![CI status](https://github.com/krishyaid-coder/flyleaf/actions/workflows/ci.yml/badge.svg)](https://github.com/krishyaid-coder/flyleaf/actions/workflows/ci.yml)
-[![PyPI version](https://img.shields.io/pypi/v/flyleaf)](https://pypi.org/project/flyleaf/)
-[![Supported Python versions](https://img.shields.io/pypi/pyversions/flyleaf)](https://pypi.org/project/flyleaf/)
-[![License](https://img.shields.io/pypi/l/flyleaf)](https://github.com/krishyaid-coder/flyleaf/blob/main/LICENSE)
+[![PyPI version](https://img.shields.io/pypi/v/flyleaf?cacheSeconds=3600)](https://pypi.org/project/flyleaf/)
+[![Supported Python versions](https://img.shields.io/pypi/pyversions/flyleaf?cacheSeconds=3600)](https://pypi.org/project/flyleaf/)
+[![License](https://img.shields.io/pypi/l/flyleaf?cacheSeconds=3600)](https://github.com/krishyaid-coder/flyleaf/blob/main/LICENSE)
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/krishyaid-coder/flyleaf/main/flyleaf.png" alt="flyleaf" width="220">
