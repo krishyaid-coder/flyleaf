@@ -11,6 +11,7 @@ from flyleaf import __version__
 from flyleaf.baseline import BASELINE_FILE, BaselineError, write_baseline
 from flyleaf.brief import GitError, build_brief, highest_severity
 from flyleaf.card import write_cards
+from flyleaf.fit import FitError, benchmark_report, fit_document, render_fit
 from flyleaf.report import render, render_citations
 from flyleaf.scan import scan_path
 from flyleaf.severity import ORDER, at_least
@@ -127,6 +128,70 @@ def brief(
             err=True,
         )
         raise typer.Exit(code=1)
+
+
+@app.command()
+def fit(
+    document: Path | None = typer.Argument(
+        None,
+        help="A brief, inventory, or memories file saved as json.",
+    ),
+    budget: int | None = typer.Option(
+        None,
+        "--budget",
+        "-b",
+        help="How many tokens the assistant may be given.",
+    ),
+    strategy: str = typer.Option(
+        "density",
+        "--strategy",
+        "-s",
+        help="density, greedy, or similarity.",
+    ),
+    query: str | None = typer.Option(
+        None,
+        "--query",
+        "-q",
+        help="What the assistant is about to answer. Similarity ranks on this.",
+    ),
+    order: str = typer.Option(
+        "density",
+        "--order",
+        help="Prompt order of the kept items: density, value, or input.",
+    ),
+    benchmark: bool = typer.Option(
+        False,
+        "--benchmark",
+        help="Print the packing scenarios instead of fitting a file.",
+    ),
+    output_format: str = typer.Option("markdown", "--format", "-f", help="markdown or json."),
+    output: Path | None = typer.Option(None, "--output", "-o", help="Write the fit to this file."),
+) -> None:
+    """Choose the findings that fit a token budget, and say why the rest did not.
+
+    Density maximises total worth. Greedy takes the best worth per token and
+    moves on. Similarity takes the most relevant item first until the budget
+    is gone. On a brief, worth is engineering attention, not legal risk.
+    """
+    if benchmark:
+        _emit(benchmark_report(), output)
+        return
+    if document is None or budget is None:
+        typer.echo("Give a document and --budget, or pass --benchmark.", err=True)
+        raise typer.Exit(code=2)
+    _check_format(output_format, {"json", "markdown"})
+    try:
+        loaded = json.loads(document.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        typer.echo(f"Could not read {document}: {exc}", err=True)
+        raise typer.Exit(code=2) from None
+    try:
+        fitted = fit_document(loaded, budget, strategy=strategy, query=query, order=order)
+        text = render_fit(fitted, output_format)
+    except FitError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from None
+    _emit(text, output)
 
 
 @app.command(name="render")

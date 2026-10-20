@@ -32,6 +32,7 @@ flowchart TD
   scan[flyleaf scan]
   inventory[Inventory]
   brief[flyleaf brief]
+  fit[flyleaf fit]
   card[flyleaf card]
   cite[flyleaf cite]
   person[Person decides]
@@ -45,6 +46,9 @@ flowchart TD
   pack --> brief
   inventory --> card
   pack --> cite
+  inventory --> fit
+  brief --> fit
+  fit --> person
   inventory --> person
   brief --> person
   card --> person
@@ -332,7 +336,7 @@ steps:
   - uses: actions/checkout@v7
     with:
       fetch-depth: 0
-  - uses: krishyaid-coder/flyleaf@v0.5.0
+  - uses: krishyaid-coder/flyleaf@v0.6.0
     id: flyleaf
     with:
       baseline: "true"
@@ -362,6 +366,52 @@ uv run flyleaf render brief.json --format sarif -o brief.sarif
 ```
 
 `render` re-renders a saved report without scanning or reading git, so a pipeline that wants three formats pays for one scan, and an archived brief can be read back long after the branch is gone.
+
+## Fit
+
+A brief can be longer than the space an assistant can hold. `fit` chooses which findings earn that space, and writes down what was left out and why. It does not store anything. The findings stay in the report you already saved.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/krishyaid-coder/flyleaf/main/fit.gif" alt="flyleaf fit packing short useful findings instead of one long lookalike, and saying why the lookalike was left out" width="820">
+</p>
+
+Worth, on a brief or an inventory, is engineering attention: high is 3, medium is 2, low is 1. A missing model card is 3 and a present card is 1. That number is not a legal risk tier. Pass `--query` when similarity should follow the question the assistant is about to answer. Without a query, similarity ranks by the same attention density uses, and the two still differ, because density weighs that attention against how many tokens the finding costs.
+
+```bash
+uv run flyleaf brief main~1 --format json -o brief.json
+uv run flyleaf fit brief.json --budget 800
+uv run flyleaf fit brief.json --budget 800 --strategy similarity --query "model card"
+uv run flyleaf fit --benchmark
+```
+
+Three packers:
+
+| Strategy | What it does |
+|---|---|
+| `density` | The default. Maximises total worth. While the pile is small it checks the combinations and keeps the best one. Past about 250,000 finding-by-token steps it packs by worth per token, and the report says which one it used. |
+| `greedy` | Always the shortcut. Best worth per token first, skip anything that no longer fits, and never go back to ask whether skipping an earlier item would have left room for a better pair. |
+| `similarity` | The usual approach. Most relevant first, then the next, until the budget is gone. Size versus worth is ignored. |
+
+`--benchmark` runs the cases that separate them.
+
+**Short gems.** Budget 100. Four short items cost 25 tokens and are worth 0.80 each, but they only look mildly relevant (0.20). One long item costs 90, is worth 0.45, and looks extremely relevant (0.98). Similarity takes the long one and has nothing left that fits: worth 0.45. Density takes the four short ones: worth 3.20.
+
+**Awkward pack.** Budget 10. One item costs 6 and is worth 6, so its rate is 1.0, and it is also the most relevant. Two others cost 5 and are worth 4, a rate of 0.8. Greedy takes the 6 and cannot fit either partner: worth 6. Density takes the pair: worth 8. Similarity takes the single item too.
+
+**Equal length.** Three items, 10 tokens each, budget 20, and worth matches relevance (0.9, 0.5, 0.1). Every strategy takes the 0.9 and the 0.5. Worth 1.40. Packing from the top was already right.
+
+A citation named by a finding is part of that finding's size, estimated at about four characters per token unless the memories file already gives a count. Two findings that cite the same provision each pay for the quote. The kept text is what `fit` would hand the assistant.
+
+A memories file packs scores you supply, which is how the benchmark is built. Waived findings are not packed. They stay waived.
+
+```json
+{
+  "kind": "memories",
+  "memories": [
+    {"id": "name", "text": "The user's name is Ada.", "tokens": 8, "value": 0.95, "relevance": 0.70}
+  ]
+}
+```
 
 ## Card
 
@@ -406,6 +456,8 @@ A component is one framework in one file, so a dependency entry and the import t
 A declared system is only as good as its `includes` patterns. A new file that no pattern covers is reported as a loose component, not quietly added to the nearest system.
 
 `brief` compares the text of detected evidence, not line numbers, so moving code does not raise a finding. A change elsewhere in a manifest does not raise one either. A rename does count as a removal plus an addition.
+
+`fit` estimates tokens at about four characters per token. That is not a model's tokenizer. A finding that cites a long provision costs those characters even when another finding cites the same text.
 
 ## Privacy
 
